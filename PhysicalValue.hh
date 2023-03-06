@@ -1,29 +1,94 @@
 #pragma once
 
+#include "TypeCheck.hh"
 #include <iostream>
-#include <type_traits>
-#include <vector>
-template <typename T>
-using remove_all_qualifiers = typename std::remove_cv<typename std::remove_reference<T>::type>::type;
 
-template <typename NumType,
-          int energyDim,
-          int lengthDim,
-          int timeDim,
-          typename = typename std::is_arithmetic<NumType>::type>
+template <int... Dim, typename Type, typename = std::enable_if_t<(sizeof...(Dim) > 0)>>
+constexpr auto PhysicalValue(Type value) -> decltype(auto)
+{
+    using base_type = remove_all_qualifiers<Type>;
+    return PhysicalValueImp<base_type, Dim...>(value);
+}
+
+template <typename Type>
+constexpr auto PhysicalValue(Type&& value) -> decltype(auto)
+{
+    return PhysicalValue<0, 0, 0>(std::forward<Type>(value));
+}
+
+template <typename NumType, int energyDim, int lengthDim, int timeDim, typename>
 class PhysicalValueImp
 {
   public:
-    template <int... Dim, typename Type>
-    friend auto PhysicalValue(Type value) -> decltype(auto);
+    template <int... Dim, typename Type, typename>
+    constexpr friend auto PhysicalValue(Type) -> decltype(auto);
 
-    template <typename RType, typename = typename std::is_arithmetic<RType>::type>
-    auto operator*(RType value) -> decltype(auto)
+    template <typename ValueType, typename = decltype(std::declval<NumType&>() *= std::declval<ValueType&>())>
+    constexpr auto operator*=(const ValueType& val) -> decltype(auto)
     {
-        return PhysicalValueImp<NumType, energyDim, lengthDim, timeDim>(value * mData);
+        mData *= val;
+        return *this;
     }
 
+    template <typename ValueType, typename = std::enable_if_t<!is_PhysicalType_v<ValueType>>>
+    constexpr auto operator*(const ValueType& val)
+    {
+        // return PhysicalValue<energyDim, lengthDim, timeDim>(mData *= val);
+        return (*this) *= val;
+    }
+
+    template <typename ValueType, typename = decltype(std::declval<NumType&>() += std::declval<ValueType&>())>
+    constexpr auto operator+=(const ValueType& val) -> decltype(auto)
+    {
+        mData += val;
+        return *this;
+    }
+
+    template <typename ValueType, typename = std::enable_if_t<!is_PhysicalType_v<ValueType>>>
+    constexpr auto operator+(const ValueType& val)
+    {
+        return (*this) += val;
+    }
+
+    template <typename ValueType, typename = decltype(std::declval<NumType&>() /= std::declval<ValueType&>())>
+    constexpr auto operator/=(const ValueType& val) -> decltype(auto)
+    {
+        mData /= val;
+        return *this;
+    }
+
+    template <typename ValueType, typename = std::enable_if_t<!is_PhysicalType_v<ValueType>>>
+    constexpr auto operator/(ValueType val)
+    {
+        return (*this) /= val;
+    }
+
+    template <typename ValueType, typename = decltype(std::declval<NumType&>() -= std::declval<ValueType&>())>
+    constexpr auto operator-=(const ValueType& val) -> decltype(auto)
+    {
+        mData -= val;
+        return *this;
+    }
+
+    template <typename ValueType, typename = std::enable_if_t<!is_PhysicalType_v<ValueType>>>
+    constexpr auto operator-(ValueType val)
+    {
+        return (*this) -= val;
+    }
+
+    // template <typename TypeOther, int eD, int lD, int tD>
+    // auto operator*(const PhysicalValueImp<TypeOther, eD, lD, tD>& other) const -> decltype(auto)
+    // {
+    //     static_assert(is_Multiplicable<NumType, TypeOther>::value, "PhysicalValue: values cannot be multiplied.");
+    //     return PhysicalValue<energyDim + eD, lengthDim + lD, timeDim + tD>(other.GetValue() * mData);
+    // }
+
     [[nodiscard]] auto GetValue() const -> NumType { return mData; }
+
+    auto Print()
+    {
+        std::cout << "Value: " << mData << " Dim: " << energyDim << ", " << lengthDim << ", " << timeDim << std::endl;
+    }
 
   private:
     explicit PhysicalValueImp(NumType value)
@@ -33,51 +98,15 @@ class PhysicalValueImp
     NumType mData;
 };
 
-template <int... Dim, typename Type>
-auto PhysicalValue(Type value) -> decltype(auto)
-{
-    return PhysicalValueImp<Type, Dim...>(value);
-}
-
-template <typename>
-struct is_PhysicalType : std::false_type
-{
-};
-
-template <typename NumType, int energyDim, int lengthDim, int timeDim>
-struct is_PhysicalType<PhysicalValueImp<NumType, energyDim, lengthDim, timeDim>> : std::true_type
-{
-};
-
-template <typename... Args>
-using has_PhysicalType = typename std::enable_if_t<(is_PhysicalType<remove_all_qualifiers<Args>>::value || ...)>;
-
-template <typename LeftType, typename RightType, typename = void>
-struct Multiply
-{
-    Multiply(LeftType&& left, RightType&& right)
-        : result{ left * right.GetValue() }
-    {
-    }
-    remove_all_qualifiers<RightType> result{};
-};
-
-template <typename LeftType, typename RightType>
-struct Multiply<LeftType,
-                RightType,
-                std::void_t<typename std::enable_if_t<std::is_arithmetic<remove_all_qualifiers<LeftType>>::value>>>
-    : std::true_type
-{
-    Multiply(LeftType&& left, RightType&& right)
-        : result{ right * left }
-    {
-        std::cout << "specail: " << std::endl;
-    }
-    remove_all_qualifiers<RightType> result;
-};
-
-template <typename Arg1, typename Arg2, typename = has_PhysicalType<Arg1, Arg2>>
-auto operator*(Arg1&& left, Arg2&& right) -> decltype(auto)
-{
-    return Multiply<Arg1, Arg2>(std::forward<Arg1>(left), std::forward<Arg2>(right)).result;
-}
+// template <typename Arg1, typename Arg2, typename = has_PhysicalType<Arg1, Arg2>>
+// auto operator*(const Arg1& left, const Arg2& right) -> decltype(auto)
+// {
+//     if constexpr (is_PhysicalType<Arg1>::value)
+//     {
+//         return left * PhysicalValue(right);
+//     }
+//     else
+//     {
+//         return right * PhysicalValue(left);
+//     }
+// }
